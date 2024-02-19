@@ -1,0 +1,1 @@
+powershell -ExecutionPolicy Bypass -Command "& {Set-Item Env:GATLING_HOME 'C:\Users\dados\Documents\gatling-charts-highcharts-bundle-3.10.3'; ./stress.ps1}"

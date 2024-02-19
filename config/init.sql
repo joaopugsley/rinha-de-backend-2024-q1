@@ -13,7 +13,7 @@ CREATE UNLOGGED TABLE transaction (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) WITH (autovacuum_enabled = false);
 
-CREATE INDEX idx_transaction_client_id ON transaction (client_id ASC);
+CREATE INDEX idx_transaction_client_id ON transaction (client_id);
 
 INSERT INTO
     client (id, limite, saldo)
