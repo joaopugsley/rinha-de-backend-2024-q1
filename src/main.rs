@@ -27,9 +27,15 @@ struct CreateTransactionRequest {
     descricao: String,
 }
 
+#[derive(Debug, Serialize)]
 struct CreateTransactionResponse {
     limite: i32,
     saldo: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct ErrorResponse {
+    message: &'static str,
 }
 
 lazy_static! {
@@ -52,19 +58,27 @@ async fn create_transaction(
     req: Json<CreateTransactionRequest>,
 ) -> impl Responder {
     if !CLIENTS.contains_key(&id.to_owned()) {
-        return HttpResponse::NotFound();
+        return HttpResponse::NotFound().json(ErrorResponse {
+            message: "'client id' is invalid",
+        });
     }
 
     if req.valor < 1 {
-        return HttpResponse::BadRequest();
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            message: "'valor' is invalid",
+        });
     }
 
     if req.tipo != "c" && req.tipo != "d" {
-        return HttpResponse::BadRequest();
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            message: "'tipo' is invalid",
+        });
     }
 
     if req.descricao.len() < 1 || req.descricao.len() > 10 {
-        return HttpResponse::BadRequest();
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            message: "'descricao' is invalid",
+        });
     }
 
     let client = match sqlx::query_as::<_, Client>("SELECT * FROM client WHERE id = $1")
@@ -74,7 +88,9 @@ async fn create_transaction(
     {
         Ok(wallet) => wallet,
         Err(_) => {
-            return HttpResponse::InternalServerError();
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                message: "'client id' is invalid",
+            });
         }
     };
 
@@ -82,7 +98,9 @@ async fn create_transaction(
         "d" => {
             let new_balance = client.saldo - req.valor;
             if new_balance < -client.limite {
-                return HttpResponse::UnprocessableEntity();
+                return HttpResponse::UnprocessableEntity().json(ErrorResponse {
+                    message: "transaction limit for the client is insufficient",
+                });
             }
             new_balance
         }
@@ -91,7 +109,9 @@ async fn create_transaction(
             new_balance
         }
         _ => {
-            return HttpResponse::BadRequest();
+            return HttpResponse::BadRequest().json(ErrorResponse {
+                message: "'tipo' is invalid",
+            });
         }
     };
 
@@ -113,7 +133,10 @@ async fn create_transaction(
     .await
     .expect("failed to register transaction");
 
-    HttpResponse::Ok()
+    HttpResponse::Ok().json(CreateTransactionResponse {
+        limite: client.limite,
+        saldo: new_balance,
+    })
 }
 
 #[actix_web::main]
@@ -138,7 +161,7 @@ async fn main() -> std::io::Result<()> {
             }))
             .service(create_transaction)
     })
-    .bind(("127.0.0.1", port))?
+    .bind(("localhost", port))?
     .run()
     .await
 }
