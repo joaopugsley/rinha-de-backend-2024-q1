@@ -1,8 +1,9 @@
 use actix_web::{
-    post,
+    get, post,
     web::{Data, Json, Path},
     App, HttpResponse, HttpServer, Responder,
 };
+use chrono::Utc;
 use dotenv::dotenv;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,27 @@ struct Client {
     id: i32,
     limite: i32,
     saldo: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+struct TransactionHistory {
+    valor: i32,
+    tipo: String,
+    descricao: String,
+    realizada_em: chrono::NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+struct TransactionHistoryBalance {
+    total: i32,
+    data_extrato: chrono::DateTime<chrono::Utc>,
+    limite: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+struct GetTransactionHistoryResponse {
+    saldo: TransactionHistoryBalance,
+    ultimas_transacoes: Vec<TransactionHistory>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -139,14 +161,62 @@ async fn create_transaction(
     })
 }
 
+#[get("/clientes/{id}/extrato")]
+async fn get_transaction_history(data: Data<ApplicationData>, id: Path<u32>) -> impl Responder {
+    if !CLIENTS.contains_key(&id.to_owned()) {
+        return HttpResponse::NotFound().json(ErrorResponse {
+            message: "'client id' is invalid",
+        });
+    }
+
+    let client = match sqlx::query_as::<_, Client>("SELECT * FROM client WHERE id = $1")
+        .bind(id.into_inner() as i32)
+        .fetch_one(&data.pool)
+        .await
+    {
+        Ok(wallet) => wallet,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                message: "'client id' is invalid",
+            });
+        }
+    };
+
+    let last_transactions = match sqlx::query_as::<_, TransactionHistory>(
+        r#"
+            SELECT valor, tipo, descricao, created_at AS realizada_em 
+            FROM transaction 
+            WHERE client_id = $1
+            ORDER BY realizada_em DESC
+            LIMIT 10
+        "#,
+    )
+    .bind(&client.id)
+    .fetch_all(&data.pool)
+    .await
+    {
+        Ok(history) => history,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                message: "'client id' is invalid",
+            })
+        }
+    };
+
+    HttpResponse::Ok().json(GetTransactionHistoryResponse {
+        saldo: TransactionHistoryBalance {
+            total: client.saldo,
+            limite: client.limite,
+            data_extrato: Utc::now(),
+        },
+        ultimas_transacoes: last_transactions,
+    })
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("env var 'DATABASE_URL' not set");
-    let port: u16 = env::var("PORT")
-        .expect("env var 'PORT' not set")
-        .parse()
-        .expect("env var 'PORT' is not a number");
 
     let db_pool = PgPoolOptions::new()
         .max_connections(10)
@@ -160,8 +230,9 @@ async fn main() -> std::io::Result<()> {
                 pool: db_pool.clone(),
             }))
             .service(create_transaction)
+            .service(get_transaction_history)
     })
-    .bind(("localhost", port))?
+    .bind(("0.0.0.0", 80))?
     .run()
     .await
 }
